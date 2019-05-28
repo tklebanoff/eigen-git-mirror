@@ -1,6 +1,7 @@
 project(EigenDemos)
 
 add_custom_target(demos)
+include_directories("/hackmitel/tools/eigen/include/eigen3")
 
 if(NOT EIGEN_TEST_NOQT)
   find_package(Qt4)
