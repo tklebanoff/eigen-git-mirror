@@ -166,17 +166,17 @@ template<> struct unpacket_traits<Packet4f> {
   typedef float     type;
   typedef Packet4f  half;
   typedef Packet4i  integer_packet;
-  enum {size=4, alignment=Aligned16, vectorizable=true};
+  enum {size=4, alignment=Aligned16, vectorizable=true, masked_load_available=false, masked_store_available=false};
 };
 template<> struct unpacket_traits<Packet2d> {
   typedef double    type;
   typedef Packet2d  half;
-  enum {size=2, alignment=Aligned16, vectorizable=true};
+  enum {size=2, alignment=Aligned16, vectorizable=true, masked_load_available=false, masked_store_available=false};
 };
 template<> struct unpacket_traits<Packet4i> {
   typedef int       type;
   typedef Packet4i  half;
-  enum {size=4, alignment=Aligned16, vectorizable=false};
+  enum {size=4, alignment=Aligned16, vectorizable=false, masked_load_available=false, masked_store_available=false};
 };
 
 #ifndef EIGEN_VECTORIZE_AVX
@@ -271,6 +271,12 @@ template<> EIGEN_STRONG_INLINE Packet4i pmadd(const Packet4i& a, const Packet4i&
 #ifdef EIGEN_VECTORIZE_FMA
 template<> EIGEN_STRONG_INLINE Packet4f pmadd(const Packet4f& a, const Packet4f& b, const Packet4f& c) { return _mm_fmadd_ps(a,b,c); }
 template<> EIGEN_STRONG_INLINE Packet2d pmadd(const Packet2d& a, const Packet2d& b, const Packet2d& c) { return _mm_fmadd_pd(a,b,c); }
+#endif
+
+#ifdef EIGEN_VECTORIZE_SSE4_1
+template<> EIGEN_DEVICE_FUNC inline Packet4f pselect(const Packet4f& mask, const Packet4f& a, const Packet4f& b) {  return _mm_blendv_ps(b,a,mask); }
+
+template<> EIGEN_DEVICE_FUNC inline Packet2d pselect(const Packet2d& mask, const Packet2d& a, const Packet2d& b) {  return _mm_blendv_pd(b,a,mask); }
 #endif
 
 template<> EIGEN_STRONG_INLINE Packet4f pmin<Packet4f>(const Packet4f& a, const Packet4f& b) {
@@ -550,7 +556,7 @@ template<> EIGEN_STRONG_INLINE void pstore1<Packet2d>(double* to, const double& 
   pstore(to, Packet2d(vec2d_swizzle1(pa,0,0)));
 }
 
-#if EIGEN_COMP_PGI
+#if EIGEN_COMP_PGI && EIGEN_COMP_PGI < 1900
 typedef const void * SsePrefetchPtrType;
 #else
 typedef const char * SsePrefetchPtrType;
@@ -1051,7 +1057,7 @@ template<> EIGEN_STRONG_INLINE double pmadd(const double& a, const double& b, co
 
 } // end namespace Eigen
 
-#if EIGEN_COMP_PGI
+#if EIGEN_COMP_PGI && EIGEN_COMP_PGI < 1900
 // PGI++ does not define the following intrinsics in C++ mode.
 static inline __m128  _mm_castpd_ps   (__m128d x) { return reinterpret_cast<__m128&>(x);  }
 static inline __m128i _mm_castpd_si128(__m128d x) { return reinterpret_cast<__m128i&>(x); }

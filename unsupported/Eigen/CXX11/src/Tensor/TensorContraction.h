@@ -244,9 +244,10 @@ template <typename ResScalar, typename LhsScalar, typename RhsScalar,
     typename StorageIndex, typename OutputMapper, typename LhsMapper,
     typename RhsMapper>
 struct TensorContractionKernel {
-  TensorContractionKernel(StorageIndex m, StorageIndex k, StorageIndex n,
-                          StorageIndex bm, StorageIndex bk, StorageIndex bn)
-      : m(m), k(k), n(n), bm(bm), bk(bk), bn(bn) {}
+  EIGEN_DEVICE_FUNC
+  TensorContractionKernel(StorageIndex m_, StorageIndex k_, StorageIndex n_,
+                          StorageIndex bm_, StorageIndex bk_, StorageIndex bn_)
+      : m(m_), k(k_), n(n_), bm(bm_), bk(bk_), bn(bn_) {}
 
   // Pack blocks of Lhs and Rhs into contiguous blocks in memory.
   typedef LhsScalar* LhsBlock;
@@ -366,9 +367,16 @@ struct NoOpOutputKernel {
    */
   template <typename Index, typename Scalar>
   EIGEN_ALWAYS_INLINE void operator()(
-      const internal::blas_data_mapper<Scalar, Index, ColMajor>& /*output_mapper*/,
-      const TensorContractionParams& /*params*/, Index /*i*/,
-      Index /*j*/, Index /*num_rows*/, Index /*num_cols*/) const {}
+      const internal::blas_data_mapper<Scalar, Index, ColMajor>& output_mapper,
+      const TensorContractionParams& params, Index i,
+      Index j, Index num_rows, Index num_cols) const {
+    EIGEN_UNUSED_VARIABLE(output_mapper);
+    EIGEN_UNUSED_VARIABLE(params);
+    EIGEN_UNUSED_VARIABLE(i);
+    EIGEN_UNUSED_VARIABLE(j);
+    EIGEN_UNUSED_VARIABLE(num_rows);
+    EIGEN_UNUSED_VARIABLE(num_cols);
+  }
 };
 
 template<typename Indices, typename LhsXprType, typename RhsXprType, typename OutputKernelType = const NoOpOutputKernel>
@@ -425,6 +433,8 @@ struct TensorContractionEvaluatorBase
   typedef typename XprType::Index Index;
   typedef typename XprType::CoeffReturnType CoeffReturnType;
   typedef typename PacketType<CoeffReturnType, Device>::type PacketReturnType;
+  typedef StorageMemory<Scalar, Device> Storage;
+  typedef typename Storage::Type EvaluatorPointerType;
 
   enum {
     IsAligned = true,
@@ -444,6 +454,9 @@ struct TensorContractionEvaluatorBase
     static_cast<int>(Layout) == static_cast<int>(ColMajor), LeftArgType, RightArgType>::type EvalLeftArgType;
   typedef typename internal::conditional<
     static_cast<int>(Layout) == static_cast<int>(ColMajor), RightArgType, LeftArgType>::type EvalRightArgType;
+  
+  typedef TensorEvaluator<EvalLeftArgType, Device> LeftEvaluatorType;
+  typedef TensorEvaluator<EvalRightArgType, Device> RightEvaluatorType;
 
   static const int LDims =
       internal::array_size<typename TensorEvaluator<EvalLeftArgType, Device>::Dimensions>::value;
@@ -645,14 +658,14 @@ struct TensorContractionEvaluatorBase
 
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE const Dimensions& dimensions() const { return m_dimensions; }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(Scalar * data) {
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE bool evalSubExprsIfNeeded(EvaluatorPointerType data) {
     m_leftImpl.evalSubExprsIfNeeded(NULL);
     m_rightImpl.evalSubExprsIfNeeded(NULL);
     if (data) {
       evalTo(data);
       return false;
     } else {
-      m_result = static_cast<Scalar *>(m_device.allocate(dimensions().TotalSize() * sizeof(Scalar)));
+      m_result = static_cast<EvaluatorPointerType>(m_device.allocate(dimensions().TotalSize() * sizeof(Scalar)));
       evalTo(m_result);
       return true;
     }
@@ -926,7 +939,7 @@ struct TensorContractionEvaluatorBase
     return internal::ploadt<PacketReturnType, LoadMode>(m_result + index);
   }
 
-  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE typename Eigen::internal::traits<XprType>::PointerType data() const { return m_result; }
+  EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE EvaluatorPointerType data() const { return m_result; }
 
 protected:
   EIGEN_DEVICE_FUNC EIGEN_STRONG_INLINE void EnableXSMMIfPossible(const array<IndexPair<Index>, ContractDims>& eval_op_indices) {
@@ -1161,9 +1174,9 @@ protected:
 
   TensorEvaluator<EvalLeftArgType, Device> m_leftImpl;
   TensorEvaluator<EvalRightArgType, Device> m_rightImpl;
-  const Device& m_device;
+  const Device EIGEN_DEVICE_REF m_device;
   OutputKernelType m_output_kernel;
-  Scalar* m_result;
+  EvaluatorPointerType m_result;
   bool m_can_use_xsmm;
 };
 

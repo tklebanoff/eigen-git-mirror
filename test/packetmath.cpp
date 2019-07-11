@@ -119,7 +119,16 @@ struct packet_helper
   inline Packet load(const T* from) const { return internal::pload<Packet>(from); }
 
   template<typename T>
+  inline Packet loadu(const T* from) const { return internal::ploadu<Packet>(from); }
+
+  template<typename T>
+  inline Packet load(const T* from, unsigned long long umask) const { return internal::ploadu<Packet>(from, umask); }
+
+  template<typename T>
   inline void store(T* to, const Packet& x) const { internal::pstore(to,x); }
+
+  template<typename T>
+  inline void store(T* to, const Packet& x, unsigned long long umask) const { internal::pstoreu(to, x, umask); }
 };
 
 template<typename Packet>
@@ -129,7 +138,16 @@ struct packet_helper<false,Packet>
   inline T load(const T* from) const { return *from; }
 
   template<typename T>
+  inline T loadu(const T* from) const { return *from; }
+
+  template<typename T>
+  inline T load(const T* from, unsigned long long) const { return *from; }
+
+  template<typename T>
   inline void store(T* to, const T& x) const { *to = x; }
+
+  template<typename T>
+  inline void store(T* to, const T& x, unsigned long long) const { *to = x; }
 };
 
 #define CHECK_CWISE1_IF(COND, REFOP, POP) if(COND) { \
@@ -146,6 +164,16 @@ struct packet_helper<false,Packet>
     ref[i] = REFOP(data1[i], data1[i+PacketSize]); \
   h.store(data2, POP(h.load(data1),h.load(data1+PacketSize))); \
   VERIFY(areApprox(ref, data2, PacketSize) && #POP); \
+}
+
+#define CHECK_CWISE3_IF(COND, REFOP, POP) if (COND) {                      \
+  packet_helper<COND, Packet> h;                                           \
+  for (int i = 0; i < PacketSize; ++i)                                     \
+    ref[i] =                                                               \
+        REFOP(data1[i], data1[i + PacketSize], data1[i + 2 * PacketSize]); \
+  h.store(data2, POP(h.load(data1), h.load(data1 + PacketSize),            \
+                     h.load(data1 + 2 * PacketSize)));                     \
+  VERIFY(areApprox(ref, data2, PacketSize) && #POP);                       \
 }
 
 #define REF_ADD(a,b) ((a)+(b))
@@ -169,6 +197,7 @@ template<typename Scalar,typename Packet> void packetmath()
   const int size = PacketSize*max_size;
   EIGEN_ALIGN_MAX Scalar data1[size];
   EIGEN_ALIGN_MAX Scalar data2[size];
+  EIGEN_ALIGN_MAX Scalar data3[size];
   EIGEN_ALIGN_MAX Packet packets[PacketSize*2];
   EIGEN_ALIGN_MAX Scalar ref[size];
   RealScalar refvalue = RealScalar(0);
@@ -192,6 +221,41 @@ template<typename Scalar,typename Packet> void packetmath()
   {
     internal::pstoreu(data2+offset, internal::pload<Packet>(data1));
     VERIFY(areApprox(data1, data2+offset, PacketSize) && "internal::pstoreu");
+  }
+
+  if (internal::unpacket_traits<Packet>::masked_load_available)
+  {
+    packet_helper<internal::unpacket_traits<Packet>::masked_load_available, Packet> h;
+    unsigned long long max_umask = (0x1ull << PacketSize);
+
+    for (int offset=0; offset<PacketSize; ++offset)
+    {
+      for (unsigned long long umask=0; umask<max_umask; ++umask)
+      {
+        h.store(data2, h.load(data1+offset, umask));
+        for (int k=0; k<PacketSize; ++k)
+          data3[k] = ((umask & ( 0x1ull << k )) >> k) ? data1[k+offset] : Scalar(0);
+        VERIFY(areApprox(data3, data2, PacketSize) && "internal::ploadu masked");
+      }
+    }
+  }
+
+  if (internal::unpacket_traits<Packet>::masked_store_available)
+  {
+    packet_helper<internal::unpacket_traits<Packet>::masked_store_available, Packet> h;
+    unsigned long long max_umask = (0x1ull << PacketSize);
+
+    for (int offset=0; offset<PacketSize; ++offset)
+    {
+      for (unsigned long long umask=0; umask<max_umask; ++umask)
+      {
+        internal::pstore(data2, internal::pset1<Packet>(Scalar(0)));
+        h.store(data2, h.loadu(data1+offset), umask);
+        for (int k=0; k<PacketSize; ++k)
+          data3[k] = ((umask & ( 0x1ull << k )) >> k) ? data1[k+offset] : Scalar(0);
+        VERIFY(areApprox(data3, data2, PacketSize) && "internal::pstoreu masked");
+      }
+    }
   }
 
   for (int offset=0; offset<PacketSize; ++offset)
@@ -393,19 +457,35 @@ template<typename Scalar,typename Packet> void packetmath()
       data1[i] = internal::random<Scalar>();
       unsigned char v = internal::random<bool>() ? 0xff : 0;
       char* bytes = (char*)(data1+PacketSize+i);
-      for(int k=0; k<int(sizeof(Scalar)); ++k)
+      for(int k=0; k<int(sizeof(Scalar)); ++k) {
         bytes[k] = v;
+      }
     }
     CHECK_CWISE2_IF(true, internal::por, internal::por);
     CHECK_CWISE2_IF(true, internal::pxor, internal::pxor);
     CHECK_CWISE2_IF(true, internal::pand, internal::pand);
     CHECK_CWISE2_IF(true, internal::pandnot, internal::pandnot);
   }
+  {
+    for (int i = 0; i < PacketSize; ++i) {
+      // "if" mask
+      unsigned char v = internal::random<bool>() ? 0xff : 0;
+      char* bytes = (char*)(data1+i);
+      for(int k=0; k<int(sizeof(Scalar)); ++k) {
+        bytes[k] = v;
+      }
+      // "then" packet
+      data1[i+PacketSize] = internal::random<Scalar>();
+      // "else" packet
+      data1[i+2*PacketSize] = internal::random<Scalar>();
+    }
+    CHECK_CWISE3_IF(true, internal::pselect, internal::pselect);
+  }
 
   {
     for (int i = 0; i < PacketSize; ++i) {
-      data1[i] = internal::random<Scalar>();
-      data2[i] = (i % 2) ? data1[i] : Scalar(0);
+      data1[i] = Scalar(i);
+      data1[i + PacketSize] = internal::random<bool>() ? data1[i] : Scalar(0);
     }
     CHECK_CWISE2_IF(true, internal::pcmp_eq, internal::pcmp_eq);
   }
